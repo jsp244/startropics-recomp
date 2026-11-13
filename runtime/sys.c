@@ -38,6 +38,7 @@ void nes_set_pad(int pad, uint8_t buttons) {
 }
 
 void nes_run_frame(void) {
+    sys.frames_run++;
     ppu.frame_done = false;
     while (!ppu.frame_done) {
         if (cpu.int_pending) cpu_take_interrupt();

@@ -271,6 +271,7 @@ typedef struct {
     void    *debug_log;         /* FILE*: when set, mapper/PPU control writes are logged */
     uint64_t a12_clocks;        /* MMC3 IRQ counter clocks observed (statistics) */
     uint64_t irq_count;         /* IRQs serviced */
+    uint64_t frames_run;        /* nes_run_frame calls, run-ahead's included */
 } sys_t;
 
 /* Global hardware state */
@@ -315,6 +316,12 @@ void    ppu_oam_dma(uint8_t page);
 void    ppu_update_nmi(void);
 extern bool ppu_no_sprite_limit;   /* option, not machine state: draw every sprite on a line instead of the hardware's 8 (no flicker) */
 extern bool ppu_hd_capture;        /* option: record ppu.hd_bg / hd_spr for the enhanced graphics */
+/* options, not machine state (snesmusic.c): a function that sees every APU register write, and the
+   channels left out of the APU's output (bit 0 pulse 1, 1 pulse 2, 2 triangle, 3 noise) while
+   apu_mute_output is on; the APU's state, and so save states, are the same either way */
+extern void (*apu_write_hook)(uint16_t addr, uint8_t v);
+extern uint8_t apu_mute_mask;
+extern bool apu_mute_output;
 uint32_t ppu_hd_tile_of(uint16_t addr);   /* the CHR ROM tile and row (bits 14-16) behind a pattern address now */
 
 /* apu.c */

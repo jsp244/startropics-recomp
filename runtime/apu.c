@@ -8,6 +8,14 @@
 
 apu_t apu;
 static int16_t apu_ring[APU_RING_SIZE];   /* output samples; indices in apu_t */
+void (*apu_write_hook)(uint16_t addr, uint8_t v);
+uint8_t apu_mute_mask;
+bool apu_mute_output;
+/* the output with apu_mute_mask's channels left out: its own averaging and output filters,
+   outside apu_t, which keeps filtering the whole mix so the state is the same either way */
+static double mo_acc;
+static uint32_t mo_n;
+static double mo_hp90_in, mo_hp90_out, mo_hp440_in, mo_hp440_out, mo_lp;
 
 void apu_flush_samples(void) { apu.ring_read = apu.ring_write; }
 
@@ -180,6 +188,16 @@ static inline void emit_sample(float v) {
     apu.hp440_prev_in = y1; apu.hp440_prev_out = y2;
     apu.lp_prev += lp_b * (y2 - apu.lp_prev);
     double s = apu.lp_prev * 32767.0 * 1.4;
+    if (apu_mute_output) {
+        x = mo_n ? mo_acc / mo_n : 0;
+        mo_acc = 0; mo_n = 0;
+        y1 = x - mo_hp90_in + hp90_a * mo_hp90_out;
+        mo_hp90_in = x; mo_hp90_out = y1;
+        y2 = y1 - mo_hp440_in + hp440_a * mo_hp440_out;
+        mo_hp440_in = y1; mo_hp440_out = y2;
+        mo_lp += lp_b * (y2 - mo_lp);
+        s = mo_lp * 32767.0 * 1.4;
+    }
     if (s > 32767) s = 32767; else if (s < -32768) s = -32768;
     uint32_t next = (apu.ring_write + 1) & (APU_RING_SIZE - 1);
     if (next != apu.ring_read) { apu_ring[apu.ring_write] = (int16_t)s; apu.ring_write = next; }
@@ -245,6 +263,12 @@ static inline void apu_cycle(void) {
     float out = pulse_table[p1 + p2] + tnd_table[3 * tri + 2 * noise + apu.dmc.output];
     apu.acc += out;
     apu.acc_n++;
+    if (apu_mute_output) {
+        uint8_t m = apu_mute_mask;
+        mo_acc += pulse_table[(m & 1 ? 0 : p1) + (m & 2 ? 0 : p2)] +
+                  tnd_table[3 * (m & 4 ? 0 : tri) + 2 * (m & 8 ? 0 : noise) + apu.dmc.output];
+        mo_n++;
+    }
     apu.sample_phase += apu.sample_rate;
     if (apu.sample_phase >= CPU_HZ) {
         apu.sample_phase -= CPU_HZ;
@@ -277,6 +301,7 @@ uint8_t apu_read_status(void) {
 
 void apu_write(uint16_t a, uint8_t v) {
     apu_run_to(cpu.cycles);
+    if (apu_write_hook) apu_write_hook(a, v);
     switch (a) {
     case 0x4000: case 0x4004: {
         apu_pulse_t *p = &apu.pulse[(a >> 2) & 1];

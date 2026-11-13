@@ -8,6 +8,7 @@
 #include "palette.h"
 #include "widescreen.h"
 #include "remaster.h"
+#include "snesmusic.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -15,6 +16,12 @@
 static FILE *trace_file;
 static uint32_t pal[512];
 static int watch_addr = -1;
+static int16_t *dsp_out;                  /* --snes-dsp-wav: the music's DSP output */
+static uint32_t dsp_n, dsp_cap;
+
+static void dsp_tap(const int16_t *s, int n) {
+    for (int i = 0; i < n && dsp_n < dsp_cap; i++, dsp_n++) { dsp_out[2 * dsp_n] = s[2 * i]; dsp_out[2 * dsp_n + 1] = s[2 * i + 1]; }
+}
 
 static void trace_hook(void) {
     fprintf(trace_file, "%04X A:%02X X:%02X Y:%02X P:%02X SP:%02X CYC:%llu",
@@ -137,15 +144,18 @@ static uint64_t frame_hash(void) {
     return h;
 }
 
-static void write_wav(const char *path, const int16_t *samples, uint32_t n, uint32_t rate) {
+/* n sample frames of `channels` interleaved samples */
+static void write_wav(const char *path, const int16_t *samples, uint32_t n, uint32_t rate, int channels) {
     FILE *f = fopen(path, "wb");
     if (!f) return;
-    uint32_t data_bytes = n * 2;
+    uint32_t data_bytes = n * 2 * (uint32_t)channels;
     uint8_t hdr[44] = { 'R','I','F','F', 0,0,0,0, 'W','A','V','E', 'f','m','t',' ', 16,0,0,0, 1,0, 1,0, 0,0,0,0, 0,0,0,0, 2,0, 16,0, 'd','a','t','a', 0,0,0,0 };
-    uint32_t riff = 36 + data_bytes, byte_rate = rate * 2;
-    memcpy(hdr + 4, &riff, 4); memcpy(hdr + 24, &rate, 4); memcpy(hdr + 28, &byte_rate, 4); memcpy(hdr + 40, &data_bytes, 4);
+    uint32_t riff = 36 + data_bytes, byte_rate = rate * 2 * (uint32_t)channels;
+    uint16_t ch = (uint16_t)channels, align = (uint16_t)(2 * channels);
+    memcpy(hdr + 4, &riff, 4); memcpy(hdr + 22, &ch, 2); memcpy(hdr + 24, &rate, 4); memcpy(hdr + 28, &byte_rate, 4);
+    memcpy(hdr + 32, &align, 2); memcpy(hdr + 40, &data_bytes, 4);
     fwrite(hdr, 1, 44, f);
-    fwrite(samples, 2, n, f);
+    fwrite(samples, 2, (size_t)n * (size_t)channels, f);
     fclose(f);
 }
 
@@ -163,7 +173,9 @@ static void usage(void) {
         "  --remaster-pack F   the pack of hand-made tiles for --remaster\n"
         "  --hd-dump FILE      write the last frame's pixel sources (tools/remaster): palette, line\n"
         "                      masks, pixels and each layer's source tile per pixel\n"
-        "  --wav FILE          write audio to a 48 kHz WAV\n"
+        "  --wav FILE          write audio to a 48 kHz WAV (stereo with --snes-music)\n"
+        "  --snes-music N      the remastered music from frame N (the game's notes on the SNES sound chip)\n"
+        "  --snes-dsp-wav FILE write the music's own DSP output (32 kHz stereo)\n"
         "  --trace FILE        write a per-instruction trace (interpreter)\n"
         "  --nestest N         nestest mode: start at $C000 and run N instructions\n"
         "  --blargg            poll the blargg test status at $6000 and exit when done\n"
@@ -176,6 +188,8 @@ static void usage(void) {
 }
 
 int main(int argc, char **argv) {
+    int snes_music = -1;
+    const char *snes_dsp_wav = NULL;
     const char *rom = NULL, *png = NULL, *wav = NULL, *trace = NULL, *cov = NULL, *hash = NULL, *sav = NULL, *input = NULL, *debug_log = NULL, *ram_dump = NULL, *wide = NULL;
     const char *state_save = NULL, *state_load = NULL, *remaster = NULL, *remaster_pack = NULL, *hd_dump = NULL;
     int frames = 600, png_every = 0, ram_dump_every = 0, nestest = 0, blargg = 0, recomp = 0, quiet = 0, trace_start = 0;
@@ -191,6 +205,8 @@ int main(int argc, char **argv) {
         else if (!strcmp(argv[i], "--remaster-pack") && i + 1 < argc) remaster_pack = argv[++i];
         else if (!strcmp(argv[i], "--hd-dump") && i + 1 < argc) hd_dump = argv[++i];
         else if (!strcmp(argv[i], "--wav") && i + 1 < argc) wav = argv[++i];
+        else if (!strcmp(argv[i], "--snes-music") && i + 1 < argc) snes_music = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--snes-dsp-wav") && i + 1 < argc) snes_dsp_wav = argv[++i];
         else if (!strcmp(argv[i], "--trace") && i + 1 < argc) trace = argv[++i];
         else if (!strcmp(argv[i], "--nestest") && i + 1 < argc) nestest = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--blargg")) blargg = 1;
@@ -265,8 +281,15 @@ int main(int argc, char **argv) {
     }
 
     FILE *hash_file = hash ? fopen(hash, "w") : NULL;
-    int16_t *audio = wav ? malloc(sizeof(int16_t) * 48000u * (size_t)(frames / 60 + 2)) : NULL;
+    int channels = snes_music >= 0 ? 2 : 1;
+    int16_t *audio = wav ? malloc(sizeof(int16_t) * 48000u * (size_t)channels * (size_t)(frames / 60 + 2)) : NULL;
     uint32_t audio_n = 0, audio_cap = wav ? 48000u * (uint32_t)(frames / 60 + 2) : 0;
+    int16_t *mono = malloc(sizeof(int16_t) * 8192);
+    if (snes_music >= 0 && snes_dsp_wav) {
+        dsp_cap = 32000u * (uint32_t)(frames / 60 + 2);
+        dsp_out = malloc(sizeof(int16_t) * 2 * dsp_cap);
+        snesmusic_tap = dsp_tap;
+    }
     uint8_t *rgb = malloc(256 * 240 * 3);
     uint8_t *rgb_wide = malloc(WS_W * WS_H * 3);
     int wide_frames = 0, wide_decoded = 0, wide_mismatch = 0, wide_tiles = 0, wide_bad_tiles = 0, wide_pixels = 0, wide_bad_pixels = 0;
@@ -277,9 +300,24 @@ int main(int argc, char **argv) {
     for (int frame = 0; frame < frames; frame++) {
         if (trace_file && trace_start && frame == trace_start) sys.trace_hook = trace_hook;
         while (ev < n_events && events[ev].frame <= frame) { nes_set_pad(0, events[ev].buttons); ev++; }
+        if (snes_music >= 0 && frame == snes_music) {
+            snesmusic_enable(true);
+            if (!snesmusic_enabled()) { fprintf(stderr, "snes-music: this ROM's sound engine is not StarTropics'\n"); return 1; }
+        }
         nes_run_frame();
+        snesmusic_frame();
         if (hash_file) fprintf(hash_file, "%d %016llx\n", frame, (unsigned long long)frame_hash());
-        if (audio) {
+        if (audio && channels == 2) {
+            uint32_t avail = apu_samples_available();
+            while (avail) {
+                uint32_t got = apu_read_samples(mono, avail < 8192 ? avail : 8192);
+                if (!got) break;
+                avail -= got;
+                if (audio_n + got > audio_cap) got = audio_cap - audio_n;
+                snesmusic_mix(mono, audio + 2 * audio_n, got, apu.sample_rate);
+                audio_n += got;
+            }
+        } else if (audio) {
             uint32_t avail = apu_samples_available();
             if (audio_n + avail > audio_cap) avail = audio_cap - audio_n;
             audio_n += apu_read_samples(audio + audio_n, avail);
@@ -374,7 +412,8 @@ int main(int argc, char **argv) {
         printf("widescreen: decoder vs the game's own output over the decoded frames: %d of %d tiles differ, %.2f%% of the pixels (sprites)\n",
                wide_bad_tiles, wide_tiles, wide_pixels ? 100.0 * wide_bad_pixels / wide_pixels : 0.0);
     }
-    if (wav) { write_wav(wav, audio, audio_n, 48000); free(audio); }
+    if (wav) { write_wav(wav, audio, audio_n, 48000, channels); free(audio); }
+    if (dsp_out) { write_wav(snes_dsp_wav, dsp_out, dsp_n, 32000, 2); free(dsp_out); }
     if (hash_file) fclose(hash_file);
     if (trace_file && trace_file != stdout) fclose(trace_file);
     if (cov) {

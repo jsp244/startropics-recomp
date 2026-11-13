@@ -43,7 +43,8 @@ Graphics      Display mode (windowed / fullscreen / fullscreen exclusive),
               borders or bars when there are: Integer only uses whole multiples of
               the NES picture, and a 16:9 picture leaves bars on a 16:10 screen (the
               16:10 aspect fills it).
-Audio         Volume, latency preset (Low / Normal / Safe)
+Audio         Volume, music (As the textures / Original / Remastered: below),
+              latency preset (Low / Normal / Safe)
 Controls      Rebind the eight NES buttons and the rewind key (select a row, press
               Enter, press the key or pad button)
 Achievements  RetroAchievements: log in, hardcore mode, progress (below)
@@ -101,6 +102,13 @@ A hand-made tile pack (remaster.pak) can replace that tile by tile: put it in th
 program's folder (Android: Android/data/<package>/files) and it is used whenever
 Textures is set to Remastered. Packs are drawn over the cartridge's tiles, so none
 comes with the program; tools/remaster in the source shows how to make one.
+
+Music: Remastered plays the game's own music on the SNES's sound chip, with new
+instruments: a steel drum and a marimba for the melodies, a plucked bass, a shaker
+and a conga, and the chip's echo. The notes are your ROM's, taken as the game plays
+them; the sound effects stay as they were. As the textures, the default, plays it
+whenever Textures is set to Remastered. The SNES sound chip is LakeSnes's emulation
+(MIT licence, see LICENSE-lakesnes.txt).
 
 RetroAchievements
 -----------------

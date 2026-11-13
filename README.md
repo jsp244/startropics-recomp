@@ -40,7 +40,7 @@ borderless fullscreen), window size 1x-6x, scaling (integer / fit / stretch), as
 ratio (square pixels 8:7, 4:3 CRT, 16:9 or 16:10 widescreen: below), filter
 (nearest / linear / sharp), CRT-style shaders (scanlines, aperture mask, glow,
 curvature; three strengths), overscan crop, a no-sprite-limit mode (every sprite
-on a line is drawn, so nothing flickers), remastered textures (below), volume,
+on a line is drawn, so nothing flickers), remastered textures and music (below), volume,
 and rebinding of the eight NES buttons and the rewind key. Nine save state
 slots, rewind (hold a key to step back through the last minutes of play),
 RetroAchievements (log in on the Achievements tab; unlocks pop up in game;
@@ -277,6 +277,24 @@ the game; none is included here.
 The program loads `remaster.pak` from its own folder or its data folder (on Android,
 the app's files folder on the shared storage).
 
+### Remastered music
+
+Audio > Music > Remastered plays the game's own music on the SNES's sound chip, the
+S-DSP; *As the textures*, the default, turns it on with Graphics > Textures > Remastered.
+StarTropics' sound engine reads every note from the cartridge as it plays: each note
+and rest of the music's four channels passes through one routine of the engine, and the
+program takes it there and plays it on an emulated S-DSP (LakeSnes's emulation, MIT
+licence) with instruments made for it: the first pulse channel on a steel drum and the
+second on a marimba (two voices each, so a note rings on while the next one sounds), the
+triangle on a plucked bass an octave lower, the noise on a shaker or a conga, all with the
+S-DSP's echo. Sound effects stay on the NES's chip: the engine plays them on streams of
+their own, and only the channels that carry the song leave the NES's output. The
+instruments are synthesized by `tools/snesmusic/instruments.py` (no recorded samples)
+into `runtime/snesmusic_bank.c`; the notes still come from your cartridge, so none of the
+game's music is in this repository. The music is matched to the loudness of the NES's
+and costs about 0.1 ms a frame; the emulated machine is the same either way, so save
+states, rewind and achievements are unaffected.
+
 ### Updates
 
 **Check for updates** on the Updates tab asks GitHub for the newest release of the
@@ -308,7 +326,9 @@ its data. `startropics --update-check` prints what a check finds.
   that doubles as the fallback for untranslated code and as the reference model.
   The generated code and the interpreter share the same inline helpers, which is
   what makes exact cosimulation possible. `runtime/remaster.c` colors the
-  remastered textures from the PPU's per-pixel record of each pixel's source tile.
+  remastered textures from the PPU's per-pixel record of each pixel's source tile;
+  `runtime/snesmusic.c` takes the music's notes from the game's sound engine and plays
+  them on the S-DSP (`runtime/snesdsp.c`).
 * `frontend/sdl_main.c` is the player: window, audio, input, saves, states,
   rewind, shaders; `frontend/achievements.c` is the RetroAchievements glue and
   `frontend/update.c` the Updates tab, both over `frontend/http.c`.
@@ -355,9 +375,10 @@ recomp/        the static recompiler (Python) and symbols.txt (address labels, n
 runtime/       hardware runtime + headless harness (C11)
 frontend/      SDL2 player (menu, video, audio, input, touch controls, rewind, achievements, updates)
 android/       Android app: CMake project, manifest, activity, build_apk.py
-third_party/   rcheevos (RetroAchievements client, MIT) and its make include
+third_party/   rcheevos (RetroAchievements client, MIT) and its make include; LakeSnes's licence (runtime/snesdsp.c)
 tests/         accuracy tests, cosimulation, nestest comparison, module tests
-tools/         icon generator, Linux / Steam Deck build container (tools/linux), DXGI adapter lister
+tools/         icon generator, Linux / Steam Deck build container (tools/linux), DXGI adapter lister,
+               remaster packs (tools/remaster), the remastered music's instruments (tools/snesmusic)
 docs/          architecture notes, player notes (Windows/Linux, Steam Deck, Android)
 generated/     output of make recomp (git-ignored)
 rom/           your .nes file (git-ignored)

@@ -39,6 +39,7 @@
 #include "gpu_sync.h"
 #include "widescreen.h"
 #include "remaster.h"
+#include "snesmusic.h"
 #include "update.h"
 #include "rewind.h"
 #include "achievements.h"
@@ -84,6 +85,7 @@ typedef struct {
     int overscan;        /* crop 8 lines top/bottom */
     int no_sprite_limit; /* 1: draw every sprite on a line instead of the hardware's 8 (no flicker) */
     int volume;          /* 0..100 */
+    int music;           /* 0 as the textures, 1 original, 2 remastered (runtime/snesmusic.c: the game's notes on the SNES's sound chip) */
     int lowlat;          /* 1: pace on the display's vblank with frame delay (60 Hz class displays) */
     int runahead;        /* frames of run-ahead, 0..3 (the game's own input latency is 2) */
     int audio_latency;   /* 0 low, 1 normal, 2 safe */
@@ -108,6 +110,7 @@ static const char *const window_sizes[]  = { "1x", "2x", "3x", "4x", "5x", "6x" 
 static const char *const scalings[]      = { "Integer (exact pixels)", "Fit (fills the screen)", "Stretch (distorts)" };
 static const char *const aspects[]       = { "Square pixels 8:7", "4:3 (CRT)", "16:9 (widescreen)", "16:10 (widescreen)" };
 static const char *const texture_names[] = { "Original", "Remastered" };
+static const char *const music_names[] = { "As the textures", "Original", "Remastered" };
 static const char *const filters[]       = { "Nearest", "Linear", "Sharp" };
 static const char *const onoff[]         = { "Off", "On" };
 static const char *const shader_names[]  = { "Off", "Scanlines", "CRT", "CRT curved", "Glow" };
@@ -185,12 +188,12 @@ static double refresh_hz;             /* reported display refresh rate, 0 if unk
 
 /* menu */
 enum { ACT_PLAY = 1, ACT_RESET, ACT_SAVE, ACT_LOAD, ACT_STOP, ACT_QUIT, ACT_CHOOSE, ACT_KEYS_DEFAULT, ACT_RA_LOGIN, ACT_UPDATE,
-       GFX_CHANGED, AUD_CHANGED, LAT_CHANGED, KEY_CHANGED, SLOT_CHANGED, RA_CHANGED, RA_TEXT };
+       GFX_CHANGED, AUD_CHANGED, MUS_CHANGED, LAT_CHANGED, KEY_CHANGED, SLOT_CHANGED, RA_CHANGED, RA_TEXT };
 enum { TAB_PLAY, TAB_GFX, TAB_AUDIO, TAB_CONTROLS, TAB_RA, TAB_ROM, TAB_UPDATES, N_TABS };
 #define GFX_ROWS 14
 #define GFX_WINDOW_SIZE_ROW 2
 #define GFX_INFO_ROW 13
-static ui_item play_items[8], gfx_all[GFX_ROWS], gfx_items[GFX_ROWS], aud_items[3], ctl_items[K_TOTAL + 3], ra_items[7], rom_items[3],
+static ui_item play_items[8], gfx_all[GFX_ROWS], gfx_items[GFX_ROWS], aud_items[4], ctl_items[K_TOTAL + 3], ra_items[7], rom_items[3],
                upd_items[3];
 static ui_tab tabs[N_TABS];
 static ui_menu menu;
@@ -393,6 +396,7 @@ static void write_config(void) {
     fprintf(f, "runahead=%d            ; frames of run-ahead (0-3); StarTropics reacts 2 frames after a press\n", cfg.runahead);
     fprintf(f, "audio_latency=%d       ; 0 low (~25 ms), 1 normal (~45 ms), 2 safe (~90 ms)\n", cfg.audio_latency);
     fprintf(f, "volume=%d\n", cfg.volume);
+    fprintf(f, "music=%d               ; 0 as the textures, 1 original, 2 remastered (the game's notes on the SNES sound chip)\n", cfg.music);
     fprintf(f, "rewind_enabled=%d      ; keep a rewind history; hold the rewind key (above) to go back\n", cfg.rewind);
     fprintf(f, "state_slot=%d          ; save state slot 1-9 (F6 / F7 in game)\n", cfg.state_slot);
     fprintf(f, "ra_hardcore=%d         ; RetroAchievements hardcore mode: no state loads, no rewind\n", cfg.ra_hardcore);
@@ -456,6 +460,7 @@ static void load_config(void) {
         else if (!strcmp(key, "runahead")) { int v = atoi(val); if (v >= 0 && v <= 3) cfg.runahead = v; }
         else if (!strcmp(key, "audio_latency")) { int v = atoi(val); if (v >= 0 && v <= 2) cfg.audio_latency = v; }
         else if (!strcmp(key, "volume")) { int v = atoi(val); if (v >= 0 && v <= 100) cfg.volume = v; }
+        else if (!strcmp(key, "music")) { int v = atoi(val); if (v >= 0 && v <= 2) cfg.music = v; }
         else if (!strcmp(key, "scale")) { int v = atoi(val); if (v >= 1 && v <= 6) cfg.window_size = v; }
         else if (!strcmp(key, "pad_layout")) pad_layout = atoi(val);
     }
@@ -964,12 +969,18 @@ static void window_size_for_config(int *w, int *h) {
 
 static void setup_textures(void);
 
+/* the remastered music on or off: by its own setting, or the textures' */
+static void apply_music(void) {
+    snesmusic_enable(rom_ok && (cfg.music == 2 || (cfg.music == 0 && cfg.textures)));
+}
+
 static void apply_graphics(void) {
     cfg.window_size = window_size_idx + 1;
     if (cfg.resolution > 0 && cfg.resolution < n_res) { cfg.res_w = res_list[cfg.resolution].w; cfg.res_h = res_list[cfg.resolution].h; }
     else { cfg.resolution = 0; cfg.res_w = cfg.res_h = 0; }
     ppu_no_sprite_limit = cfg.no_sprite_limit != 0;
     setup_textures();
+    apply_music();
     Uint32 flags = SDL_GetWindowFlags(window);
     int cur = ((flags & SDL_WINDOW_FULLSCREEN_DESKTOP) == SDL_WINDOW_FULLSCREEN_DESKTOP) ? 1 : (flags & SDL_WINDOW_FULLSCREEN) ? 2 : 0;
     if (cfg.display_mode == 2) {
@@ -1392,6 +1403,7 @@ static int load_rom_file(const char *path) {
     ach_reset();
     remaster_forget();   /* the new ROM's tiles: read again when the textures are on */
     setup_textures();
+    apply_music();
     printf("ROM: %s (%s) %s | mode: %s | data folder: %s\n", rom_name, known ? known : "unknown", rom_hashes,
            sys.use_recomp ? "native (recompiled)" : "interpreter", data_dir);
     fflush(stdout);
@@ -1617,9 +1629,11 @@ static void build_menu(void) {
 
     ui_item *a = aud_items;
     a[0] = (ui_item){ "Volume", UI_INT, AUD_CHANGED, &cfg.volume, NULL, 0, 0, 100, 5, "%", "", NULL };
-    a[1] = (ui_item){ "Latency", UI_CHOICE, LAT_CHANGED, &cfg.audio_latency, latency_names, 3, 0, 0, 0, NULL, "", NULL };
-    a[2] = (ui_item){ "", UI_INFO, 0, NULL, NULL, 0, 0, 0, 0, NULL,
-                      "48 kHz with the NES mixer and output filters. Dynamic rate control holds the queue at the chosen latency; use Safe if sound stutters.", NULL };
+    a[1] = (ui_item){ "Music", UI_CHOICE, MUS_CHANGED, &cfg.music, music_names, 3, 0, 0, 0, NULL, "", NULL };
+    a[2] = (ui_item){ "Latency", UI_CHOICE, LAT_CHANGED, &cfg.audio_latency, latency_names, 3, 0, 0, 0, NULL, "", NULL };
+    a[3] = (ui_item){ "", UI_INFO, 0, NULL, NULL, 0, 0, 0, 0, NULL,
+                      "Remastered music: the game's own notes on the SNES's sound chip (steel drum, marimba, bass, shaker, conga, echo); "
+                      "sound effects stay on the NES's. 48 kHz with the NES mixer and output filters; use Safe latency if sound stutters.", NULL };
 
     static const char *const ctl_labels[K_TOTAL] = { "A (jump)", "B (attack)", "Select", "Start", "Up", "Down", "Left", "Right",
                                                      "Rewind (hold)", "Fast-forward (hold)" };
@@ -1667,7 +1681,7 @@ static void build_menu(void) {
 
     tabs[TAB_PLAY] = (ui_tab){ "Play", play_items, 8, 0 };
     tabs[TAB_GFX] = (ui_tab){ "Graphics", gfx_items, GFX_ROWS, 0 };
-    tabs[TAB_AUDIO] = (ui_tab){ "Audio", aud_items, 3, 0 };
+    tabs[TAB_AUDIO] = (ui_tab){ "Audio", aud_items, 4, 0 };
     tabs[TAB_CONTROLS] = (ui_tab){ "Controls", ctl_items, K_TOTAL + 3, 0 };
     tabs[TAB_RA] = (ui_tab){ "Achievements", ra_items, ach_available() ? 7 : 1, 0 };
     tabs[TAB_ROM] = (ui_tab){ "ROM", rom_items, 3, 1 };
@@ -1722,6 +1736,7 @@ static void menu_action(ui_event e) {
     if (e.type == UI_EV_CHANGED) {
         if (e.id == GFX_CHANGED) apply_graphics();
         else if (e.id == LAT_CHANGED) { audio_out_set_preset(cfg.audio_latency); write_config(); }
+        else if (e.id == MUS_CHANGED) { apply_music(); write_config(); }
         else if (e.id == SLOT_CHANGED) select_slot(cfg.state_slot);
         else if (e.id == RA_CHANGED) { ach_set_hardcore(cfg.ra_hardcore); if (cfg.ra_hardcore) rewind_clear(); chord_clear(); write_config(); }
         else if (e.id == RA_TEXT) { /* typed into a text row: nothing to store */ }
@@ -2509,6 +2524,7 @@ int main(int argc, char **argv) {
             if (rewind_pop(rw_state)) {
                 nes_state_load(rw_state, rw_size);
                 apu_flush_samples();
+                snesmusic_reset();         /* the music waits for the notes after the rewind */
                 chord_clear();
                 nes_set_pad(0, game_pad());
                 nes_run_frame();
@@ -2526,6 +2542,7 @@ int main(int argc, char **argv) {
             if (rewind_redo(rw_state)) {
                 nes_state_load(rw_state, rw_size);
                 apu_flush_samples();
+                snesmusic_reset();
                 chord_clear();
                 nes_set_pad(0, game_pad());
                 nes_run_frame();

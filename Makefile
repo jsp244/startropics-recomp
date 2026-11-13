@@ -29,7 +29,7 @@ BUILD   ?= build
 GEN     := generated
 
 RUNTIME_SRC := runtime/cpu.c runtime/mem.c runtime/cart.c runtime/mapper.c runtime/ppu.c \
-               runtime/apu.c runtime/sys.c runtime/png.c runtime/palette.c runtime/widescreen.c runtime/remaster.c
+               runtime/apu.c runtime/sys.c runtime/png.c runtime/palette.c runtime/widescreen.c runtime/remaster.c                runtime/snesdsp.c runtime/snesmusic.c runtime/snesmusic_bank.c
 RUNTIME_OBJ := $(patsubst runtime/%.c,$(BUILD)/%.o,$(RUNTIME_SRC))
 
 GEN_SRC := $(wildcard $(GEN)/*.c)
@@ -113,7 +113,7 @@ endif
 
 all: headless
 
-$(BUILD)/%.o: runtime/%.c runtime/nes.h runtime/widescreen.h runtime/remaster.h
+$(BUILD)/%.o: runtime/%.c runtime/nes.h runtime/widescreen.h runtime/remaster.h runtime/snesdsp.h runtime/snesmusic.h
 	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -173,6 +173,7 @@ dist: $(BUILD)/startropics$(EXE)
 	cp $(BUILD)/startropics$(EXE) dist/startropics/
 	cp docs/PLAYERS.md dist/startropics/README.txt
 	@test -z "$(RCHEEVOS_SRC)" || cp third_party/rcheevos/LICENSE dist/startropics/LICENSE-rcheevos.txt
+	cp third_party/lakesnes/LICENSE dist/startropics/LICENSE-lakesnes.txt
 	@test "$(DECK_EDITION)" != 1 || cp docs/STEAMDECK.md dist/startropics/STEAMDECK.txt
 	@test "$(DECK_EDITION)" != 1 || cp tools/steamdeck/add-to-steam.py dist/startropics/
 	@test "$(WINDOWS)" = 1 || cp frontend/icon_preview.png dist/startropics/startropics.png

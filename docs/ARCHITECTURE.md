@@ -24,6 +24,9 @@ runtime/cart.c       iNES / NES 2.0 loader, SHA-1/CRC32, MMC6 detection, battery
 runtime/sys.c        power/reset, frame loop, save states
 runtime/widescreen.c the overworld map decoded beside the picture (MAP_FORMATS.md)
 runtime/remaster.c   remastered textures: ramps, automatic inks, the tile pack, frame coloring
+runtime/snesmusic.c  remastered music: the sound engine's notes on the S-DSP, the NES's music channels muted
+runtime/snesdsp.c    the S-DSP, the SNES's sound chip (LakeSnes's emulation, MIT)
+runtime/snesmusic_bank.c  its instruments, made by tools/snesmusic/instruments.py
 runtime/headless.c   command-line harness (tests, scripting, screenshots, traces, coverage)
 runtime/recomp_rt.h  helpers used by the generated code
 recomp/recomp.py     the static recompiler
@@ -35,8 +38,9 @@ frontend/update.c    the Updates tab: the newest GitHub release, its download, c
 frontend/http.c      blocking HTTPS for worker threads: WinHTTP, libcurl (loaded at run time) or the Java side
 ```
 
-Options that are not machine state (`ppu_no_sprite_limit`) live outside the
-state structs, so a save state or a rewind step never changes a setting. Save
+Options that are not machine state (`ppu_no_sprite_limit`, `apu_write_hook`,
+`apu_mute_mask`) live outside the state structs, so a save state or a rewind step never
+changes a setting. Save
 states (version 2) leave out the PPU frame buffer, which every frame rewrites,
 and the APU's sample ring, which lives outside `apu_t` with only its indices in
 the state; a state is about 24 KB.
@@ -258,6 +262,31 @@ other color, in strokes with no 4x4 square forming at most three connected shape
 speckled textures exceed) keep their colors flat. A pack ("STRM" version 2: tile, layer,
 64 inks) overrides them per tile and layer; version 1 packs, made before inks of another color
 followed the line's palette, still load, and builds from before then skip version 2 packs.
+
+**Remastered music.** StarTropics' sound engine (bank 31) plays six streams: 0 pulse 1,
+1 pulse 2, 2 effects on pulse 2, 3 noise, 4 effects on noise, 5 triangle. A song takes
+streams 0, 1, 3 and 5, its data at $A000-$BFFF; a sound effect takes 2 or 4 (or another
+stream its header names), its data at $C000-$DFFF, and while one plays on 2 or 4 the
+engine keeps the music of 1 or 3 off that channel. Every note and rest goes through the
+routine at $FD1A, which stores the new $4015 in the engine's copy ($7160) and then writes
+it, with the stream in X: the channel's bit set for a note, clear for a rest. `apu.c`
+calls `apu_write_hook` on every register write; `snesmusic.c` takes a note there (that
+store-then-write pair, since the recompiled code keeps no program counter), reads its
+period and volume from the registers at the end of the frame, and plays it a frame late
+on the S-DSP, so the voice it reuses is released (8 ms) the frame before. The frame
+after a pulse's rest the engine rewrites the silent channel's period; the chosen sound
+plays that as a soft repeat of the last note (`REPEAT_AFTER_REST`). Notes held over
+frames follow their channel's period (vibrato, slides). The music is only taken from an
+engine whose routine and stream tables match byte for byte. A run-ahead frame's notes
+are dropped when the next frame starts (`sys.frames_run`); only `snesmusic_frame`, called
+after the frames that are heard, plays them, and a state load or a rewind step releases
+the voices. `apu_mute_mask` names the channels the song has (recomputed on every write
+from the stream states); `apu.c` averages and filters a second mix without them, outside
+`apu_t`, which keeps filtering the whole mix, so the machine state is the same with the
+music on (the frame hashes match). The DSP renders as many 32 kHz samples as the frame's
+CPU cycles call for; `snesmusic_mix` resamples them (4-point Hermite) to the APU's
+output rate and adds them, scaled to the NES music's loudness, to both channels of the
+stereo output.
 
 **RetroAchievements.** `achievements.c` wraps rc_client: memory reads go through
 `nes_peek` (no side effects, CPU addresses), HTTP requests run on worker threads

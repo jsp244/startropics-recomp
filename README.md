@@ -280,7 +280,7 @@ the app's files folder on the shared storage).
 ### Remastered music
 
 Audio > Music > Remastered plays the game's own music on the SNES's sound chip, the
-S-DSP; *As the textures*, the default, turns it on with Graphics > Textures > Remastered.
+S-DSP. It is off until you choose it there, even with the remastered textures on.
 StarTropics' sound engine reads every note from the cartridge as it plays: each note
 and rest of the music's four channels passes through one routine of the engine, and the
 program takes it there and plays it on an emulated S-DSP (LakeSnes's emulation, MIT

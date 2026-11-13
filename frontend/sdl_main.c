@@ -85,7 +85,7 @@ typedef struct {
     int overscan;        /* crop 8 lines top/bottom */
     int no_sprite_limit; /* 1: draw every sprite on a line instead of the hardware's 8 (no flicker) */
     int volume;          /* 0..100 */
-    int music;           /* 0 as the textures, 1 original, 2 remastered (runtime/snesmusic.c: the game's notes on the SNES's sound chip) */
+    int music;           /* 0 original, 1 remastered (runtime/snesmusic.c: the game's notes on the SNES's sound chip) */
     int lowlat;          /* 1: pace on the display's vblank with frame delay (60 Hz class displays) */
     int runahead;        /* frames of run-ahead, 0..3 (the game's own input latency is 2) */
     int audio_latency;   /* 0 low, 1 normal, 2 safe */
@@ -110,7 +110,7 @@ static const char *const window_sizes[]  = { "1x", "2x", "3x", "4x", "5x", "6x" 
 static const char *const scalings[]      = { "Integer (exact pixels)", "Fit (fills the screen)", "Stretch (distorts)" };
 static const char *const aspects[]       = { "Square pixels 8:7", "4:3 (CRT)", "16:9 (widescreen)", "16:10 (widescreen)" };
 static const char *const texture_names[] = { "Original", "Remastered" };
-static const char *const music_names[] = { "As the textures", "Original", "Remastered" };
+static const char *const music_names[]   = { "Original", "Remastered" };
 static const char *const filters[]       = { "Nearest", "Linear", "Sharp" };
 static const char *const onoff[]         = { "Off", "On" };
 static const char *const shader_names[]  = { "Off", "Scanlines", "CRT", "CRT curved", "Glow" };
@@ -396,7 +396,7 @@ static void write_config(void) {
     fprintf(f, "runahead=%d            ; frames of run-ahead (0-3); StarTropics reacts 2 frames after a press\n", cfg.runahead);
     fprintf(f, "audio_latency=%d       ; 0 low (~25 ms), 1 normal (~45 ms), 2 safe (~90 ms)\n", cfg.audio_latency);
     fprintf(f, "volume=%d\n", cfg.volume);
-    fprintf(f, "music=%d               ; 0 as the textures, 1 original, 2 remastered (the game's notes on the SNES sound chip)\n", cfg.music);
+    fprintf(f, "music=%d               ; 1 original, 2 remastered (the game's notes on the SNES sound chip)\n", cfg.music + 1);
     fprintf(f, "rewind_enabled=%d      ; keep a rewind history; hold the rewind key (above) to go back\n", cfg.rewind);
     fprintf(f, "state_slot=%d          ; save state slot 1-9 (F6 / F7 in game)\n", cfg.state_slot);
     fprintf(f, "ra_hardcore=%d         ; RetroAchievements hardcore mode: no state loads, no rewind\n", cfg.ra_hardcore);
@@ -460,7 +460,7 @@ static void load_config(void) {
         else if (!strcmp(key, "runahead")) { int v = atoi(val); if (v >= 0 && v <= 3) cfg.runahead = v; }
         else if (!strcmp(key, "audio_latency")) { int v = atoi(val); if (v >= 0 && v <= 2) cfg.audio_latency = v; }
         else if (!strcmp(key, "volume")) { int v = atoi(val); if (v >= 0 && v <= 100) cfg.volume = v; }
-        else if (!strcmp(key, "music")) { int v = atoi(val); if (v >= 0 && v <= 2) cfg.music = v; }
+        else if (!strcmp(key, "music")) cfg.music = atoi(val) == 2;   /* 1 original; 0, 1.3.0's "as the textures", reads as original too */
         else if (!strcmp(key, "scale")) { int v = atoi(val); if (v >= 1 && v <= 6) cfg.window_size = v; }
         else if (!strcmp(key, "pad_layout")) pad_layout = atoi(val);
     }
@@ -969,9 +969,9 @@ static void window_size_for_config(int *w, int *h) {
 
 static void setup_textures(void);
 
-/* the remastered music on or off: by its own setting, or the textures' */
+/* the remastered music on or off: only by its own setting (Audio > Music), whatever the textures */
 static void apply_music(void) {
-    snesmusic_enable(rom_ok && (cfg.music == 2 || (cfg.music == 0 && cfg.textures)));
+    snesmusic_enable(rom_ok && cfg.music == 1);
 }
 
 static void apply_graphics(void) {
@@ -980,7 +980,6 @@ static void apply_graphics(void) {
     else { cfg.resolution = 0; cfg.res_w = cfg.res_h = 0; }
     ppu_no_sprite_limit = cfg.no_sprite_limit != 0;
     setup_textures();
-    apply_music();
     Uint32 flags = SDL_GetWindowFlags(window);
     int cur = ((flags & SDL_WINDOW_FULLSCREEN_DESKTOP) == SDL_WINDOW_FULLSCREEN_DESKTOP) ? 1 : (flags & SDL_WINDOW_FULLSCREEN) ? 2 : 0;
     if (cfg.display_mode == 2) {
@@ -1629,7 +1628,7 @@ static void build_menu(void) {
 
     ui_item *a = aud_items;
     a[0] = (ui_item){ "Volume", UI_INT, AUD_CHANGED, &cfg.volume, NULL, 0, 0, 100, 5, "%", "", NULL };
-    a[1] = (ui_item){ "Music", UI_CHOICE, MUS_CHANGED, &cfg.music, music_names, 3, 0, 0, 0, NULL, "", NULL };
+    a[1] = (ui_item){ "Music", UI_CHOICE, MUS_CHANGED, &cfg.music, music_names, 2, 0, 0, 0, NULL, "", NULL };
     a[2] = (ui_item){ "Latency", UI_CHOICE, LAT_CHANGED, &cfg.audio_latency, latency_names, 3, 0, 0, 0, NULL, "", NULL };
     a[3] = (ui_item){ "", UI_INFO, 0, NULL, NULL, 0, 0, 0, 0, NULL,
                       "Remastered music: the game's own notes on the SNES's sound chip (steel drum, marimba, bass, shaker, conga, echo); "

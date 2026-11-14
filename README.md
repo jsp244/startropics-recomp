@@ -25,7 +25,8 @@ your .nes again, at run time, for CHR graphics, level data, text, music
 launcher in the style of the N64 recompilation projects: a tabbed menu
 (**Play / Graphics / Audio / Controls / Achievements / ROM / Updates**) over a hero backdrop. On the ROM tab
 "Choose ROM file..." opens the system file dialog; dropping a `.nes` file onto the
-window or passing it on the command line also works. The file's hash is checked
+window or passing it on the command line also works, and so does the RetComM
+launcher, which names the file in a `rom.cfg` beside the program. The file's hash is checked
 and anything that is not a StarTropics dump is refused. Once a valid dump is
 loaded the launcher runs the game's own intro, title screen and demo in the
 background with sound, so the intro and title music play straight from the ROM

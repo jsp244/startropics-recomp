@@ -1,5 +1,7 @@
 # StarTropics native PC port (static recompilation)
 
+▶ **Video:** https://youtu.be/DCeECN3S5bE
+
 A native Windows/Linux/macOS build of Nintendo's *StarTropics* (NES, 1990),
 produced by **statically recompiling your own cartridge dump** into C and
 linking it against a small hardware runtime (PPU, APU, MMC6 mapper, input).

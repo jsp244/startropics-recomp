@@ -39,6 +39,17 @@ public class StarTropicsActivity extends SDLActivity {
         preferNesRefreshRate();
     }
 
+    /* Android keeps the process, and libmain.so with it, after the activity ends, and the next start
+       runs SDL_main again in it. The game keeps its state in static variables, so that run began on
+       the last one's: the main loop's flag still said quit, and the game closed at once, on every
+       start until the system ended the process. SDLActivity.onDestroy waits for SDL_main to return
+       (saves and settings are written by then), so end the process here: every start begins fresh. */
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+        System.exit(0);
+    }
+
     /* The NES shows 60 frames a second. Ask for the display mode (at the current resolution) with
        the highest refresh rate that is a whole multiple of 60 Hz, up to 240 Hz: 120 Hz on a
        120 / 144 / 165 Hz panel. Every frame then stays on screen equally long, and a faster

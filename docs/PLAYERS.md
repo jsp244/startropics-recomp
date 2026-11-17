@@ -7,10 +7,24 @@ the file's hash and refuses anything that is not StarTropics.
 
 Getting started
 ---------------
-1. Run startropics.exe (Windows) or startropics (Linux/macOS).
+1. Run startropics.exe (Windows) or startropics (Linux), or open the app (macOS, see below).
 2. On the ROM tab choose "Choose ROM file..." and pick your .nes file, or drop
    the file onto the window, or start the program with the file as an argument.
 3. Go to Play > Start game. The chosen file is remembered in startropics.ini.
+
+On a Mac
+--------
+It runs on macOS 11 or newer, on Apple silicon and Intel Macs.
+1. Move StarTropics from the unzipped folder to your Applications folder (or any
+   other folder: an app opened straight from Downloads cannot update itself).
+2. The first time you open it, macOS says it cannot check the app for malware, as it
+   is not signed through Apple's developer program. Close that message, open System
+   Settings > Privacy & Security, scroll down and choose "Open Anyway" beside the
+   app's name. This is needed once.
+3. Choose your ROM on the ROM tab, drop it onto the window or onto the app's icon,
+   or put it in the folder the app is in.
+Keys that differ: Option+Return switches fullscreen, Cmd+R resets, and on a laptop
+keyboard the F keys (save states, screenshots) need the fn key.
 
 Menu (Esc in game, Start + Select together, or LT + RT on Android and the Steam Deck)
 -------------------------------------------------------------------------------------
@@ -132,7 +146,8 @@ the newest release (only when you press it). When there is a newer one, Install
 version X downloads it, checks it against the checksum GitHub lists for it and puts
 it in place of this program; your settings, saves, ROM and texture packs stay as they
 are, and the previous version is kept as startropics.old (startropics.exe.old on
-Windows). Restart now starts the new version at once (as with Quit, play since the
+Windows; on a Mac the whole app is replaced and the previous one goes to the Trash).
+Restart now starts the new version at once (as with Quit, play since the
 game last saved is not kept); otherwise it starts next time. The program's folder
 has to be writable for this; if it is not, download the new version from the release
 page. On Android the tab opens the release page instead: download the APK of your
@@ -152,7 +167,9 @@ These live next to startropics.exe when that folder is writable. If it is not
 (Program Files, a read-only location, or the program was started from inside
 the zip without extracting it), they go to
 %APPDATA%\StarTropicsPort\StarTropics\ instead; the ROM you chose is remembered
-either way. Extract the zip to a normal folder for portable use.
+either way. Extract the zip to a normal folder for portable use. The Mac app always
+keeps them in ~/Library/Application Support/StarTropicsPort/StarTropics/ (put
+remaster.pak there, or beside the app).
 
 The ROM is verified by its hash before it is accepted: the ROM tab shows the
 SHA-1, MD5 and CRC32 of your file and whether it matches a known StarTropics

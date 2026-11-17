@@ -125,6 +125,9 @@ pacman -S --needed mingw-w64-x86_64-gcc mingw-w64-x86_64-SDL2 make python
 **Linux**: `sudo apt install build-essential python3 libsdl2-dev libcurl4-openssl-dev` (or your
 distro's equivalent) for a local build; portable packages are built in a container (below).
 
+**macOS**: Xcode's command line tools (`xcode-select --install`), Python 3 and CMake;
+`tools/macos/build.sh` builds SDL2 itself (below).
+
 Then:
 
 ```
@@ -166,6 +169,27 @@ offscreen driver), and writes `dist/startropics-linux-x86_64.tar.gz` and
 starts fullscreen at the Deck's 1280x800 in the 16:10 widescreen view with pad-first
 hints; the generic Linux build does the same when it finds itself on a Deck. Setup on
 the Deck: `docs/STEAMDECK.md`.
+
+### macOS package
+
+`tools/macos/build.sh` (on a Mac, after `make recomp`, with `ST_VERSION` and `ST_REPO` set as
+for Linux) builds SDL2 as a static library for Apple silicon and Intel Macs, then the game
+for both in one program for macOS 11 and newer, runs the cosimulation and the self-tests
+(offscreen, the Intel half again under Rosetta, then the app itself in a real window, opened
+with a ROM dropped on it), and writes `dist/startropics-macos.zip`: the folder `startropics`
+with `StarTropics.app`, `README.txt` and the licences. The app is signed ad hoc (Apple silicon
+runs nothing unsigned), not through Apple's developer program, so macOS asks the player to
+allow it once (`docs/PLAYERS.md`). It links only macOS's own libraries, libcurl among them for
+RetroAchievements and updates, and never writes into itself: settings and saves go to
+`~/Library/Application Support/StarTropicsPort/StarTropics/`, and the folder the app is in
+takes the place of the program's folder for a ROM, `rom.cfg`, `remaster.pak` or
+`launcher-background.bmp`. `frontend/macos.m` holds the little Cocoa it needs (the open-file
+panel, the Trash).
+
+`.github/workflows/macos.yml` runs the script on GitHub's Macs for the `macos` branch and for
+`v*` tags. The cartridge dump it recompiles comes from a private repository, read with a
+deploy key kept as a secret; the package and the test pictures leave the job only encrypted
+(`openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass ...` opens the artifact).
 
 ### Android
 
@@ -310,7 +334,12 @@ the SHA-256 digest GitHub lists for it, unpacks it with the system's `tar` (Wind
 takes its name, with the package's other files beside it. Settings, saves, the ROM and
 texture packs are not in the package and stay as they are. **Restart now** shuts down
 as Quit does and starts the new version; on Linux it takes over the same process, so on
-a Steam Deck the game session carries on. Android cannot replace its own package: there
+a Steam Deck the game session carries on. On macOS the zip holds the app: `ditto` unpacks
+it beside the running app, which is renamed `StarTropics.app.old` while the new one takes its
+name, and the old one goes to the Trash; the package's notes and licences go beside the app
+only where it has its `README.txt` there (not in Applications), **Restart now** opens the new
+app, and an app macOS runs from a temporary copy (opened straight from the download) is not
+updated in place. Android cannot replace its own package: there
 the tab opens the release page, and the downloaded APK installs over the app, keeping
 its data. `startropics --update-check` prints what a check finds.
 
@@ -376,13 +405,15 @@ instruction that fell back to the interpreter, so repeating the cycle converges.
 ```
 recomp/        the static recompiler (Python) and symbols.txt (address labels, no game data)
 runtime/       hardware runtime + headless harness (C11)
-frontend/      SDL2 player (menu, video, audio, input, touch controls, rewind, achievements, updates)
+frontend/      SDL2 player (menu, video, audio, input, touch controls, rewind, achievements, updates; macos.m)
 android/       Android app: CMake project, manifest, activity, build_apk.py
 third_party/   rcheevos (RetroAchievements client, MIT) and its make include; LakeSnes's licence (runtime/snesdsp.c)
 tests/         accuracy tests, cosimulation, nestest comparison, module tests
-tools/         icon generator, Linux / Steam Deck build container (tools/linux), DXGI adapter lister,
+tools/         icon generator, Linux / Steam Deck build container (tools/linux), macOS build script and
+               Info.plist (tools/macos), DXGI adapter lister,
                remaster packs (tools/remaster), the remastered music's instruments (tools/snesmusic)
-docs/          architecture notes, player notes (Windows/Linux, Steam Deck, Android)
+docs/          architecture notes, player notes (Windows/macOS/Linux, Steam Deck, Android)
+.github/       the workflow that builds and tests the macOS package on GitHub's Macs
 generated/     output of make recomp (git-ignored)
 rom/           your .nes file (git-ignored)
 ```

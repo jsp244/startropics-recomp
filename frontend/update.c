@@ -14,9 +14,16 @@
  * the other files of the package, into its place. Settings, saves, the ROM and remaster.pak are
  * not in the package, so they stay as they are.
  *
+ * macOS: the package (a zip) holds the app; ditto unpacks it into "<app>.update" beside the app,
+ * the running app is renamed <app>.old, the new one takes its name, and the old one goes to the
+ * Trash. Nothing is written inside an app (its signature covers every file in it); the package's
+ * notes and licences go beside the app only where the app has its README.txt there (the
+ * package's folder, not Applications). An app macOS runs from a temporary copy (opened straight
+ * from the download, "App Translocation") is not updated in place.
+ *
  * Restart: the program shuts down as for Quit (the battery save and the settings are written),
  * then on Linux exec()s the new version in the same process, so a Steam game session on the
- * Deck carries on; on Windows it starts a new process.
+ * Deck carries on; on Windows it starts a new process; on macOS it opens the new app.
  *
  * Android cannot replace its own package; the menu opens the release page there instead.
  * Checks and installs run on a worker thread; the menu reads the state on the main thread.
@@ -45,6 +52,11 @@
 #  include <sys/wait.h>
 #  include <unistd.h>
 extern char **environ;
+#endif
+#ifdef __APPLE__
+#  include <mach-o/dyld.h>
+#  include "macos.h"
+#  define MAC_APP "StarTropics.app"   /* the app in the package's folder (the player's copy may have another name) */
 #endif
 
 #ifndef ST_VERSION
@@ -111,6 +123,8 @@ const char *update_edition(void) {
     return g_touch ? "Android, phone" : "Android";
 #elif defined(_WIN32)
     return "Windows";
+#elif defined(__APPLE__)
+    return "macOS";
 #elif defined(DECK_EDITION)
     return "Steam Deck";
 #else
@@ -292,12 +306,43 @@ static int find_exe(void) {   /* main thread */
     wchar_t w[1024];
     DWORD n = GetModuleFileNameW(NULL, w, 1024);
     if (n == 0 || n >= 1024 || WideCharToMultiByte(CP_UTF8, 0, w, -1, g_exe, sizeof g_exe, NULL, NULL) <= 0) g_exe[0] = '\0';
+#elif defined(__APPLE__)
+    char raw[1024], *real = NULL;
+    uint32_t n = sizeof raw;
+    if (_NSGetExecutablePath(raw, &n) == 0) real = realpath(raw, NULL);
+    snprintf(g_exe, sizeof g_exe, "%s", real && strlen(real) < sizeof g_exe ? real : "");
+    free(real);
 #elif !defined(__ANDROID__)
     ssize_t n = readlink("/proc/self/exe", g_exe, sizeof g_exe - 1);
     g_exe[n > 0 ? n : 0] = '\0';
 #endif
     return g_exe[0] != '\0';
 }
+
+#ifdef __APPLE__
+/* the app that holds the program exe: ".../Name.app" for ".../Name.app/Contents/MacOS/name"; 0 for a
+   program outside an app */
+static int app_of(const char *exe, char *app, size_t cap) {
+    const char *m = NULL;
+    for (const char *p = strstr(exe, "/Contents/MacOS/"); p; p = strstr(p + 1, "/Contents/MacOS/")) m = p;
+    if (!m || m - exe < 5 || SDL_strncasecmp(m - 4, ".app", 4) != 0 || strchr(m + 16, '/') || (size_t)(m - exe) >= cap) return 0;
+    snprintf(app, cap, "%.*s", (int)(m - exe), exe);
+    return 1;
+}
+
+/* macOS runs a downloaded app that was not moved from a temporary, read-only copy */
+static int translocated(const char *app) { return strstr(app, "/AppTranslocation/") != NULL; }
+
+/* a Mac program: universal (both kinds of Mac), or 64-bit for one of them */
+static int is_mac_program(const char *path) {
+    unsigned char h[4] = { 0 };
+    FILE *f = fopen(path, "rb");
+    size_t n = f ? fread(h, 1, 4, f) : 0;
+    if (f) fclose(f);
+    uint32_t be = n == 4 ? (uint32_t)h[0] << 24 | (uint32_t)h[1] << 16 | (uint32_t)h[2] << 8 | h[3] : 0;
+    return be == 0xCAFEBABEu || be == 0xCAFEBABFu || be == 0xCFFAEDFEu;
+}
+#endif
 
 #ifdef _WIN32
 static int wide(const char *s, wchar_t *w, int cap) { return MultiByteToWideChar(CP_UTF8, 0, s, -1, w, cap) > 0; }
@@ -415,17 +460,22 @@ static int run_tar(const char *archive, const char *dir, char *why, size_t cap) 
     size_t count = 0, k = 0;
     while (environ[count]) count++;
     char **env = (char **)calloc(count + 1, sizeof *env);
+#  ifdef __APPLE__
+    char *argv[] = { "/usr/bin/ditto", "-x", "-k", (char *)archive, (char *)dir, NULL };   /* macOS's own unzip */
+#  else
     char *argv[] = { "tar", "-xzf", (char *)archive, "-C", (char *)dir, NULL };
+#  endif
+    const char *tool = strrchr(argv[0], '/') ? strrchr(argv[0], '/') + 1 : argv[0];
     pid_t pid;
     int status = 0, rc;
     if (!env) { snprintf(why, cap, "out of memory"); return 0; }
     for (size_t i = 0; i < count; i++)
         if (strncmp(environ[i], "LD_PRELOAD=", 11)) env[k++] = environ[i];
-    rc = posix_spawnp(&pid, "tar", NULL, NULL, argv, env);
+    rc = posix_spawnp(&pid, argv[0], NULL, NULL, argv, env);
     free(env);
-    if (rc != 0) { snprintf(why, cap, "tar could not be started (%s)", strerror(rc)); return 0; }
+    if (rc != 0) { snprintf(why, cap, "%s could not be started (%s)", tool, strerror(rc)); return 0; }
     while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) { snprintf(why, cap, "tar could not unpack the package"); return 0; }
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) { snprintf(why, cap, "%s could not unpack the package", tool); return 0; }
     return 1;
 #endif
 }
@@ -478,22 +528,39 @@ static void check(void) {
 
     const char *latest = (tag[0] == 'v' || tag[0] == 'V') ? tag + 1 : tag;
     int cmp = compare_versions(tag, mine), installable = 0;
+#ifdef __APPLE__
+    char app[1024];
+    int in_app = app_of(g_exe, app, sizeof app), moved = in_app && !translocated(app);
+#endif
     lock();
     snprintf(g_info.latest, sizeof g_info.latest, "%s", latest);
     snprintf(g_info.page, sizeof g_info.page, "%s", page);
     snprintf(g_url, sizeof g_url, "%s", asset);
     snprintf(g_digest, sizeof g_digest, "%s", digest);
     g_size = size;
-#ifndef __ANDROID__
+#if defined(__APPLE__)
+    installable = asset[0] && moved;
+#elif !defined(__ANDROID__)
     installable = asset[0] && g_exe[0];
 #endif
     g_info.can_install = installable;
     unlock();
     if (cmp < 0) set_state(UPD_CURRENT, "This build (%s) is newer than the latest release (%s).", mine, latest);
     else if (cmp == 0) set_state(UPD_CURRENT, "You have the newest version (%s).", latest);
-#ifdef __ANDROID__
+#if defined(__ANDROID__)
     else set_state(UPD_AVAILABLE, "Version %s is out (published %s). Open the download page, download %s and open it: "
                    "Android installs it over this app and keeps its saves and settings.", latest, date, pkg);
+#elif defined(__APPLE__)
+    else if (!asset[0]) set_state(UPD_AVAILABLE, "Version %s is out (published %s), but without a package this app can "
+                                  "install for itself: see %s", latest, date, page);
+    else if (!in_app) set_state(UPD_AVAILABLE, "Version %s is out (published %s), but this program is not inside its app (%s), "
+                                "so it is not updated from here: see %s", latest, date, MAC_APP, page);
+    else if (!moved) set_state(UPD_AVAILABLE, "Version %s is out (published %s). macOS runs this copy from a temporary place "
+                               "because it was opened straight from the download: move the app to your Applications folder "
+                               "(or any other), open it from there and check again, or download the update from %s", latest, date, page);
+    else set_state(UPD_AVAILABLE, "Version %s is out (published %s). Installing downloads %.1f MB from GitHub and replaces this "
+                   "app (the old one goes to the Trash); settings, saves, the ROM and texture packs stay as they are.", latest, date,
+                   (size > 0 ? size : 0) / 1048576.0);
 #else
     else if (!installable) set_state(UPD_AVAILABLE, "Version %s is out (published %s), but without a package this program can "
                                      "install for itself: see %s", latest, date, page);
@@ -509,6 +576,81 @@ static void on_progress(void *ctx, size_t received, long long total) {
     if (total > 0) SDL_AtomicSet(&g_total, (int)total);
 }
 
+#ifdef __APPLE__
+static int g_trashed;                /* the last installation put the previous app in the Trash */
+
+/* worker thread: download, verify, unpack beside the app, swap the apps; why says what failed */
+static int install(char *why, size_t cap) {
+    char url[512], digest[80], app[1024], dir[1100], upd[1100], archive[1400], pkg[1200], newapp[1300], newbin[1400];
+    char oldapp[1100], readme[1200];
+    long long size;
+    const char *slash;
+    http_request_t rq;
+    http_response_t rs;
+    FILE *f;
+    int ok = 0;
+
+    lock();
+    snprintf(url, sizeof url, "%s", g_url);
+    snprintf(digest, sizeof digest, "%s", g_digest);
+    size = g_size;
+    unlock();
+    g_trashed = 0;
+    if (!url[0] || !app_of(g_exe, app, sizeof app) || !(slash = strrchr(app, '/'))) { snprintf(why, cap, "nothing to install"); return 0; }
+    snprintf(dir, sizeof dir, "%.*s", (int)(slash - app + 1), app);           /* the app's folder, with the separator */
+    snprintf(upd, sizeof upd, "%s.update", app);                              /* beside the app: never inside it */
+    remove_tree(upd);
+    if (!f_mkdir(upd)) { snprintf(why, cap, "the app's folder (%.300s) cannot be written", dir); return 0; }
+
+    memset(&rq, 0, sizeof rq);
+    rq.url = url;
+    rq.user_agent = user_agent();
+    rq.timeout_ms = TIMEOUT_MS;
+    rq.progress = on_progress;
+    if (!http_request(&rq, &rs)) { snprintf(why, cap, "the download failed: %s", rs.error); goto done; }
+    SDL_AtomicSet(&g_got, -1);
+    if (rs.status != 200) { snprintf(why, cap, "the download failed (GitHub answered with status %d)", rs.status); goto done; }
+    if (size >= 0 && (long long)rs.len != size) { snprintf(why, cap, "the download was incomplete"); goto done; }
+    if (!strncmp(digest, "sha256:", 7)) {
+        char hex[65];
+        sha256_hex((const uint8_t *)rs.body, rs.len, hex);
+        if (strcmp(hex, digest + 7)) { snprintf(why, cap, "the download does not match the checksum GitHub lists for it"); goto done; }
+    }
+    snprintf(archive, sizeof archive, "%s/%s", upd, package_name());
+    f = f_open(archive, "wb");
+    if (!f || fwrite(rs.body, 1, rs.len, f) != rs.len) {
+        if (f) fclose(f);
+        snprintf(why, cap, "the download could not be saved beside the app");
+        goto done;
+    }
+    if (fclose(f) != 0) { snprintf(why, cap, "the download could not be saved beside the app"); goto done; }
+    free(rs.body);
+    rs.body = NULL;
+
+    if (!run_tar(archive, upd, why, cap)) goto done;
+    snprintf(pkg, sizeof pkg, "%s/" PACKAGE_DIR, upd);
+    snprintf(newapp, sizeof newapp, "%s/" MAC_APP, pkg);
+    snprintf(newbin, sizeof newbin, "%s/Contents/MacOS/" BINARY, newapp);
+    if (!is_mac_program(newbin)) { snprintf(why, cap, "the package holds no usable %s", MAC_APP); goto done; }
+    snprintf(readme, sizeof readme, "%sREADME.txt", dir);
+    if (f_exists(readme)) list_dir(pkg, move_entry, dir);   /* the notes and licences, where the app has them beside it */
+    snprintf(oldapp, sizeof oldapp, "%s.old", app);
+    remove_tree(oldapp);                                     /* one an earlier update could not put in the Trash */
+    if (rename(app, oldapp) != 0) { snprintf(why, cap, "the app could not be moved aside (%s)", strerror(errno)); goto done; }
+    if (rename(newapp, app) != 0) {
+        int e = errno;
+        rename(oldapp, app);
+        snprintf(why, cap, "the new version could not take the app's place (%s)", strerror(e));
+        goto done;
+    }
+    ok = 1;
+    g_trashed = macos_trash(oldapp);
+done:
+    free(rs.body);
+    remove_tree(upd);
+    return ok;
+}
+#else
 /* worker thread: download, verify, unpack, swap; why says what failed */
 static int install(char *why, size_t cap) {
     char url[512], digest[80], dir[1100], upd[1120], archive[1400], pkg[1200], newbin[1300], backup[1100];
@@ -578,6 +720,7 @@ done:
     remove_tree(upd);
     return ok;
 }
+#endif
 
 static int SDLCALL check_worker(void *arg) {
     (void)arg;
@@ -592,10 +735,24 @@ static int SDLCALL install_worker(void *arg) {
     lock();
     snprintf(latest, sizeof latest, "%s", g_info.latest);
     unlock();
+#ifdef __APPLE__
+    if (install(why, sizeof why)) {
+        char app[1024];
+        if (g_trashed)
+            set_state(UPD_INSTALLED, "Version %s is installed. Restart now to use it (as with Quit, play since the game last saved is "
+                      "not kept), or it starts next time. The previous version is in the Trash.", latest);
+        else
+            set_state(UPD_INSTALLED, "Version %s is installed. Restart now to use it (as with Quit, play since the game last saved is "
+                      "not kept), or it starts next time. The previous version is kept as %s.old.", latest,
+                      app_of(g_exe, app, sizeof app) && strrchr(app, '/') ? strrchr(app, '/') + 1 : MAC_APP);
+        (void)name;
+    } else
+#else
     if (install(why, sizeof why))
         set_state(UPD_INSTALLED, "Version %s is installed. Restart now to use it (as with Quit, play since the game last saved is "
                   "not kept), or it starts next time. The previous version is kept as %s.old.", latest, name ? name + 1 : BINARY);
     else
+#endif
         set_state(UPD_FAILED, "Version %s was not installed: %s.", latest, why);
     return 0;
 }
@@ -685,6 +842,26 @@ int update_restart(char **argv) {
     (void)argv;
     return 0;
 #else
+#  ifdef __APPLE__
+    char app[1024];
+    if (app_of(g_exe, app, sizeof app)) {
+        /* a new instance of the app through Launch Services, as the Finder opens one; this one then ends */
+        char *args[40];
+        int k = 0, status = 0;
+        pid_t pid;
+        args[k++] = (char *)"/usr/bin/open";
+        args[k++] = (char *)"-n";
+        args[k++] = app;
+        if (argv && argv[0] && argv[1]) {
+            args[k++] = (char *)"--args";
+            for (int i = 1; argv[i] && k < 39; i++) args[k++] = argv[i];
+        }
+        args[k] = NULL;
+        if (posix_spawn(&pid, "/usr/bin/open", NULL, NULL, args, environ) != 0) return 0;
+        while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+        return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    }
+#  endif
     execv(g_exe, argv);
     fprintf(stderr, "restart: %s: %s\n", g_exe, strerror(errno));
     return 0;

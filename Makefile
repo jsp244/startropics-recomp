@@ -3,18 +3,19 @@
 #   make headless        headless test harness (interpreter only)
 #   make recomp          run the recompiler on rom/*.nes -> generated/
 #   make startropics     native game executable (needs generated/ and SDL2)
+#   make app             macOS: the game as an app (StarTropics.app)
 #   make test            CPU/PPU/APU/mapper regression tests
 #
 # Requires: a C11 compiler, GNU make, Python 3; SDL2 for the frontend.
 
+# Windows detection: $(OS) is set by cmd/PowerShell, uname by MSYS2/MinGW shells
+UNAME := $(shell uname -s 2>/dev/null)
 ifeq ($(origin CC),default)
-  CC := gcc
+  CC := $(if $(filter Darwin,$(UNAME)),clang,gcc)
 endif
 PYTHON  ?= python
 CFLAGS  ?= -O2 -std=gnu11 -Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wno-missing-field-initializers
 LDFLAGS ?=
-# Windows detection: $(OS) is set by cmd/PowerShell, uname by MSYS2/MinGW shells
-UNAME := $(shell uname -s 2>/dev/null)
 ifneq (,$(findstring Windows_NT,$(OS))$(findstring MINGW,$(UNAME))$(findstring MSYS,$(UNAME)))
   WINDOWS := 1
   EXE := .exe
@@ -22,6 +23,7 @@ else
   WINDOWS := 0
   EXE :=
 endif
+MACOS := $(if $(filter Darwin,$(UNAME)),1,0)
 
 # first .nes in rom/ (filenames may contain spaces, so avoid $(firstword))
 ROM     ?= $(shell ls rom/*.nes 2>/dev/null | head -n 1)
@@ -43,6 +45,16 @@ ifeq ($(WINDOWS),1)
   # otherwise stop the program with error 0xc000007b
   SDL_LIBS := -static $(shell $(SDL_CONFIG) --static-libs 2>/dev/null) -lcomdlg32 -ldxgi -static-libgcc
   PLATFORM := win64
+  ARCHIVE := zip
+else ifeq ($(MACOS),1)
+  # one program for Apple silicon and Intel Macs (MAC_ARCHS) on macOS 11 or newer, with SDL2 linked in:
+  # tools/macos/build.sh builds SDL2 that way, for the same Macs. `make app` / `make dist` put it in an app.
+  MAC_ARCHS ?= -arch arm64 -arch x86_64
+  MAC_MIN ?= 11.0
+  CFLAGS += $(MAC_ARCHS) -mmacosx-version-min=$(MAC_MIN)
+  LDFLAGS += $(MAC_ARCHS) -mmacosx-version-min=$(MAC_MIN)
+  SDL_LIBS := $(filter-out -lm,$(shell $(SDL_CONFIG) --static-libs 2>/dev/null))   # -lm comes at the end of the link anyway
+  PLATFORM := macos
   ARCHIVE := zip
 else
   ifeq ($(SDL_STATIC),1)
@@ -83,6 +95,10 @@ endif
 #      the program also starts on systems without it (the online features then say so)
 ifeq ($(WINDOWS),1)
   HTTP_LIBS := -lwinhttp
+else ifeq ($(MACOS),1)
+  # macOS has libcurl itself, and its headers in the SDK
+  HTTP_CFLAGS := -DHTTP_CURL
+  HTTP_LIBS := -lcurl
 else ifneq ($(shell pkg-config --exists libcurl 2>/dev/null && echo yes),)
   HTTP_CFLAGS := -DHTTP_CURL_DLOPEN $(shell pkg-config --cflags libcurl)
   HTTP_LIBS := -ldl -lpthread
@@ -97,10 +113,9 @@ ST_VERSION ?= $(or $(shell git describe --tags --match "v[0-9]*" --dirty 2>/dev/
 ST_REPO ?= $(shell git remote get-url origin 2>/dev/null | sed -n -E 's|^.*github\.com[:/]+([^/]+/[^/]+)$$|\1|p' | sed 's|\.git$$||')
 UPDATE_DEFS := -DST_VERSION=\"$(ST_VERSION)\" -DST_REPO=\"$(ST_REPO)\" \
                -DST_PACKAGE=\"startropics-$(PLATFORM).$(if $(filter zip,$(ARCHIVE)),zip,tar.gz)\"
-ifneq ($(UPDATE_DEFS),$(file <$(BUILD)/update-defs.txt))
-  $(shell mkdir -p $(BUILD))
-  $(file >$(BUILD)/update-defs.txt,$(UPDATE_DEFS))
-endif
+# (the shell writes it: the make macOS comes with, 3.81, has no $(file ...))
+UPDATE_STAMP := $(shell mkdir -p $(BUILD) && [ "$$(cat $(BUILD)/update-defs.txt 2>/dev/null)" = '$(UPDATE_DEFS)' ] || \
+                  printf '%s\n' '$(UPDATE_DEFS)' > $(BUILD)/update-defs.txt)
 
 FRONTEND_OBJ := $(patsubst frontend/%.c,$(BUILD)/fe_%.o,$(FRONTEND_SRC)) $(RCHEEVOS_OBJ)
 ifeq ($(WINDOWS),1)
@@ -108,8 +123,15 @@ ifeq ($(WINDOWS),1)
   WINDRES ?= windres
   FRONTEND_OBJ += $(BUILD)/fe_resources.o
 endif
+ifeq ($(MACOS),1)
+  # the open-file panel and the Trash (Cocoa)
+  FRONTEND_OBJ += $(BUILD)/fe_macos.o
+endif
+# the app's version for macOS (Info.plist): the numbers of ST_VERSION
+MAC_VERSION = $(or $(shell echo '$(ST_VERSION)' | sed -n -E 's/^v?([0-9]+(\.[0-9]+){0,2}).*/\1/p'),0.0.0)
+MAC_APP_DIR = $(BUILD)/app/StarTropics.app
 
-.PHONY: all headless recomp startropics test cosim dist clean
+.PHONY: all headless recomp startropics app test cosim dist clean
 
 all: headless
 
@@ -167,16 +189,35 @@ $(BUILD)/fe_resources.o: frontend/startropics.rc frontend/startropics.ico
 	@mkdir -p $(BUILD)
 	$(WINDRES) -I frontend $< -O coff -o $@
 
-# ---- distributable package: the executable plus the player notes ----
-dist: $(BUILD)/startropics$(EXE)
+$(BUILD)/fe_macos.o: frontend/macos.m frontend/macos.h
+	@mkdir -p $(BUILD)
+	$(CC) $(CFLAGS) -fobjc-arc $(SDL_CFLAGS) -c $< -o $@
+
+# ---- macOS: the app (Info.plist from tools/macos/Info.plist with this version, the icon, the notes and
+#      licences), signed ad hoc as Apple silicon requires; nothing is written into it later (settings and
+#      saves go to Application Support, and an update replaces the whole app) ----
+app: $(BUILD)/startropics$(EXE)
+	rm -rf "$(BUILD)/app" && mkdir -p "$(MAC_APP_DIR)/Contents/MacOS" "$(MAC_APP_DIR)/Contents/Resources"
+	cp $(BUILD)/startropics "$(MAC_APP_DIR)/Contents/MacOS/startropics"
+	cp frontend/startropics.icns "$(MAC_APP_DIR)/Contents/Resources/startropics.icns"
+	cp docs/PLAYERS.md "$(MAC_APP_DIR)/Contents/Resources/README.txt"
+	@test -z "$(RCHEEVOS_SRC)" || cp third_party/rcheevos/LICENSE "$(MAC_APP_DIR)/Contents/Resources/LICENSE-rcheevos.txt"
+	cp third_party/lakesnes/LICENSE "$(MAC_APP_DIR)/Contents/Resources/LICENSE-lakesnes.txt"
+	sed 's/@VERSION@/$(MAC_VERSION)/g' tools/macos/Info.plist > "$(MAC_APP_DIR)/Contents/Info.plist"
+	printf 'APPL????' > "$(MAC_APP_DIR)/Contents/PkgInfo"
+	codesign --force --sign - --timestamp=none "$(MAC_APP_DIR)"
+	@echo "app: $(MAC_APP_DIR) (version $(MAC_VERSION))"
+
+# ---- distributable package: the executable (on macOS the app) plus the player notes ----
+dist: $(if $(filter 1,$(MACOS)),app,$(BUILD)/startropics$(EXE))
 	rm -rf dist/startropics && mkdir -p dist/startropics
-	cp $(BUILD)/startropics$(EXE) dist/startropics/
+	@if [ "$(MACOS)" = 1 ]; then cp -R "$(MAC_APP_DIR)" dist/startropics/; else cp $(BUILD)/startropics$(EXE) dist/startropics/; fi
 	cp docs/PLAYERS.md dist/startropics/README.txt
 	@test -z "$(RCHEEVOS_SRC)" || cp third_party/rcheevos/LICENSE dist/startropics/LICENSE-rcheevos.txt
 	cp third_party/lakesnes/LICENSE dist/startropics/LICENSE-lakesnes.txt
 	@test "$(DECK_EDITION)" != 1 || cp docs/STEAMDECK.md dist/startropics/STEAMDECK.txt
 	@test "$(DECK_EDITION)" != 1 || cp tools/steamdeck/add-to-steam.py dist/startropics/
-	@test "$(WINDOWS)" = 1 || cp frontend/icon_preview.png dist/startropics/startropics.png
+	@test "$(WINDOWS)" = 1 || test "$(MACOS)" = 1 || cp frontend/icon_preview.png dist/startropics/startropics.png
 	$(PYTHON) -c "import shutil; shutil.make_archive('dist/startropics-$(PLATFORM)', '$(ARCHIVE)', 'dist', 'startropics')"
 	@echo "package: dist/startropics-$(PLATFORM).$(if $(filter zip,$(ARCHIVE)),zip,tar.gz)"
 

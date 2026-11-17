@@ -79,8 +79,9 @@ int main(int argc, char **argv) {
     /* 8. the merged NES pad read with no devices: keyboard only (no SDL video, so no keys are down) */
     int keys[8] = { SDLK_x, SDLK_z, SDLK_RSHIFT, SDLK_RETURN, SDLK_UP, SDLK_DOWN, SDLK_LEFT, SDLK_RIGHT }, pads[8];
     input_default_pads(pads);
-    CHECK(pads[0] == SDL_CONTROLLER_BUTTON_B && pads[1] == SDL_CONTROLLER_BUTTON_A && pads[3] == SDL_CONTROLLER_BUTTON_START,
-          "default pad layout: NES A = pad B, NES B = pad A, Start = Start");
+    CHECK(pads[0] == SDL_CONTROLLER_BUTTON_A && pads[1] == SDL_CONTROLLER_BUTTON_X && pads[2] == SDL_CONTROLLER_BUTTON_BACK &&
+          pads[3] == SDL_CONTROLLER_BUTTON_START,
+          "default pad layout: NES A = pad A, NES B = pad X (left of A, as on the NES pad), Select = Back, Start = Start");
     (void)keys;
 
     /* 9. text rows: Enter edits, typed text and Backspace apply, Enter keeps, Escape restores */

@@ -189,7 +189,9 @@ panel, the Trash).
 `.github/workflows/macos.yml` runs the script on GitHub's Macs for the `macos` branch and for
 `v*` tags. The cartridge dump it recompiles comes from a private repository, read with a
 deploy key kept as a secret; the package and the test pictures leave the job only encrypted
-(`openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass ...` opens the artifact).
+(`openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass ...` opens the artifact). Run by hand
+with `update_test_from` set to an older version, it also lets the app it built install the
+published release over itself through its own Updates tab (`UPDATE_TEST_FROM` in the script).
 
 ### Android
 

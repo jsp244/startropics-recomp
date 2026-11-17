@@ -2463,8 +2463,8 @@ int main(int argc, char **argv) {
         draw_game();
         SDL_RenderPresent(renderer);
         int rc = write_frame_png(selftest_png);
-        printf("selftest: %d frames, %s -> %s; run-ahead determinism %s\n", selftest_frames,
-               rc == 0 ? "wrote" : "FAILED to write", selftest_png, same ? "OK" : "MISMATCH");
+        printf("selftest: %d frames, %s -> %s; run-ahead determinism %s; frame %016llx\n", selftest_frames,
+               rc == 0 ? "wrote" : "FAILED to write", selftest_png, same ? "OK" : "MISMATCH", (unsigned long long)h2);
         font_quit(); SDL_DestroyRenderer(renderer); SDL_DestroyWindow(window); SDL_Quit();
         return (rc == 0 && same) ? 0 : 1;
     }

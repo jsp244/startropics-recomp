@@ -50,7 +50,7 @@ if [ -n "$ROM" ]; then
         # (not the offscreen driver: on a Mac SDL gives every window OpenGL, which offscreen has no library for)
         export SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software SDL_AUDIODRIVER=dummy
         B=./build-mac/startropics
-        $B "$ROM" --selftest 300 shots/selftest.png | grep selftest
+        $B "$ROM" --selftest 300 shots/selftest.png | grep selftest | tee shots/selftest.txt
         $B --trigger-test | tail -n 1
         $B --touch-test | tail -n 1
         $B "$ROM" --chord-test | tail -n 1
@@ -62,9 +62,15 @@ if [ -n "$ROM" ]; then
         $B --update-check | tail -n 2 || true   # the Updates tab's check (needs the network)
         if /usr/bin/arch -x86_64 /usr/bin/true 2>/dev/null; then
             echo "== the Intel half of the program, under Rosetta"
-            /usr/bin/arch -x86_64 $B "$ROM" --selftest 300 shots/selftest-x86_64.png | grep selftest
+            /usr/bin/arch -x86_64 $B "$ROM" --selftest 300 shots/selftest-x86_64.png | grep selftest | tee shots/selftest-x86_64.txt
             /usr/bin/arch -x86_64 $B "$ROM" --rewind-test 600 | grep rewind-test
-            cmp shots/selftest.png shots/selftest-x86_64.png && echo "the same picture from both halves"
+            # the frame the PPU drew (its palette numbers) must be the same bit for bit; the colours it turns
+            # into may differ by a step where the NTSC palette's pow/cos/sin round differently in the two
+            # halves' math libraries (runtime/palette.c)
+            test "$(sed -n 's/.*; frame //p' shots/selftest.txt)" = "$(sed -n 's/.*; frame //p' shots/selftest-x86_64.txt)"
+            echo "the same frame from both halves"
+            if cmp -s shots/selftest.png shots/selftest-x86_64.png; then echo "and the same colours"
+            else printf 'colours: '; python3 tools/macos/pngdiff.py shots/selftest.png shots/selftest-x86_64.png; fi
         else
             echo "== (this Mac has no Rosetta: the Intel half was not run)"
         fi

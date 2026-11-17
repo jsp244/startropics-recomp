@@ -56,16 +56,13 @@ if [ -n "$ROM" ]; then
         $B "$ROM" --chord-test | tail -n 1
         $B "$ROM" --rewind-test 1200 | grep rewind-test
         $B "$ROM" --ui-shot shots/ui-offscreen.png 1 60 | grep ui-shot
-        sed 's/^textures=.*/textures=1/' build-mac/startropics.ini > build-mac/startropics.ini.new
-        mv build-mac/startropics.ini.new build-mac/startropics.ini   # the remastered graphics
-        $B "$ROM" --game-shot shots/textures.png 900 | grep game-shot
         $B --update-check | tail -n 2 || true   # the Updates tab's check (needs the network)
         if /usr/bin/arch -x86_64 /usr/bin/true 2>/dev/null; then
-            echo "== the Intel half of the program, under Rosetta"
+            echo "== the Intel half of the program, under Rosetta (the same settings)"
             /usr/bin/arch -x86_64 $B "$ROM" --selftest 300 shots/selftest-x86_64.png | grep selftest | tee shots/selftest-x86_64.txt
             /usr/bin/arch -x86_64 $B "$ROM" --rewind-test 600 | grep rewind-test
             # the frame the PPU drew (its palette numbers) must be the same bit for bit; the colours it turns
-            # into may differ by a step where the NTSC palette's pow/cos/sin round differently in the two
+            # into could differ by a step if the NTSC palette's pow/cos/sin rounded differently in the two
             # halves' math libraries (runtime/palette.c)
             test "$(sed -n 's/.*; frame //p' shots/selftest.txt)" = "$(sed -n 's/.*; frame //p' shots/selftest-x86_64.txt)"
             echo "the same frame from both halves"
@@ -74,6 +71,10 @@ if [ -n "$ROM" ]; then
         else
             echo "== (this Mac has no Rosetta: the Intel half was not run)"
         fi
+        echo "== the remastered graphics"
+        sed 's/^textures=.*/textures=1/' build-mac/startropics.ini > build-mac/startropics.ini.new
+        mv build-mac/startropics.ini.new build-mac/startropics.ini
+        $B "$ROM" --game-shot shots/textures.png 900 | grep game-shot
     )
 fi
 rm -f build-mac/startropics.ini

@@ -51,8 +51,9 @@ else ifeq ($(MACOS),1)
   # tools/macos/build.sh builds SDL2 that way, for the same Macs. `make app` / `make dist` put it in an app.
   MAC_ARCHS ?= -arch arm64 -arch x86_64
   MAC_MIN ?= 11.0
-  CFLAGS += $(MAC_ARCHS) -mmacosx-version-min=$(MAC_MIN)
-  LDFLAGS += $(MAC_ARCHS) -mmacosx-version-min=$(MAC_MIN)
+  MAC_FLAGS := $(MAC_ARCHS) -mmacosx-version-min=$(MAC_MIN)
+  CFLAGS += $(MAC_FLAGS)
+  LDFLAGS += $(MAC_FLAGS)
   SDL_LIBS := $(filter-out -lm,$(shell $(SDL_CONFIG) --static-libs 2>/dev/null))   # -lm comes at the end of the link anyway
   PLATFORM := macos
   ARCHIVE := zip
@@ -170,11 +171,12 @@ $(BUILD)/startropics$(EXE): $(RUNTIME_OBJ) $(FRONTEND_OBJ) $(GEN_OBJ)
 	@test -n "$(GEN_SRC)" || (echo "no generated code: run 'make recomp' first" && exit 1)
 	$(CC) $(CFLAGS) $^ -o $@ $(SDL_LIBS) $(RCHEEVOS_LIBS) $(HTTP_LIBS) $(LDFLAGS) -lm
 
-# rcheevos sources compile with their own flags (search path for the vendored tree)
+# rcheevos sources compile with their own flags (search path for the vendored tree), for the same
+# machines as the rest (MAC_FLAGS: both kinds of Mac)
 define RC_RULE
 $(BUILD)/rc/$(notdir $(basename $(1))).o: $(1)
 	@mkdir -p $(BUILD)/rc
-	$(CC) -O2 -std=gnu11 -w $(RCHEEVOS_CFLAGS) -c $$< -o $$@
+	$(CC) -O2 -std=gnu11 -w $(MAC_FLAGS) $(RCHEEVOS_CFLAGS) -c $$< -o $$@
 endef
 $(foreach src,$(RCHEEVOS_SRC),$(eval $(call RC_RULE,$(src))))
 

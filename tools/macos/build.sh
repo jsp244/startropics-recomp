@@ -45,9 +45,10 @@ if [ -n "$ROM" ]; then
     echo "== the remastered music (the game's notes on the SNES sound chip)"
     ./build/nes-headless-recomp --rom "$ROM" --recomp --frames 900 --snes-music 0 --wav shots/music.wav --quiet
     python3 -c "import wave, array, math; w = wave.open('shots/music.wav'); a = array.array('h', w.readframes(w.getnframes())); print('remastered music: %d stereo samples, RMS %.0f' % (len(a) // 2, math.sqrt(sum(x * x for x in a) / len(a))))"
-    echo "== self-tests with SDL's offscreen video, software renderer and dummy audio drivers"
+    echo "== self-tests without a display: SDL's dummy video and audio drivers, its software renderer"
     (
-        export SDL_VIDEODRIVER=offscreen SDL_RENDER_DRIVER=software SDL_AUDIODRIVER=dummy   # (no OpenGL offscreen on a Mac)
+        # (not the offscreen driver: on a Mac SDL gives every window OpenGL, which offscreen has no library for)
+        export SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software SDL_AUDIODRIVER=dummy
         B=./build-mac/startropics
         $B "$ROM" --selftest 300 shots/selftest.png | grep selftest
         $B --trigger-test | tail -n 1
